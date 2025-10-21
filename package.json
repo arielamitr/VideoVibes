@@ -59,6 +59,7 @@
     "dayjs": "1.11.13",
     "dompurify": "3.2.6",
     "dropbox": "10.7.0",
+    "face-api.js": "^0.22.2",
     "focus-visible": "5.1.0",
     "glob": "11.0.3",
     "grapheme-splitter": "1.0.4",
