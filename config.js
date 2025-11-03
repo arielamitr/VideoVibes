@@ -1911,6 +1911,15 @@ var config = {
     //     // Maximum file size limit (-1 value disables any file size limit check)
     //     maxFileSize: 50,
     // },
+
+    // === VideoVibes custom config ===
+    sarcasm: {
+        enabled: true,
+        apiUrl: 'http://localhost:8081/sarcasm',
+        chunkMs: 5000,
+        threshold: 0.7
+    }
+
 };
 
 // Set the default values for JaaS customers

@@ -7,6 +7,8 @@ const process = require('process');
 const webpack = require('webpack');
 const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
 
+
+
 /**
  * The URL of the Jitsi Meet deployment to be proxy to in the context of
  * development with webpack-dev-server.
@@ -65,31 +67,58 @@ function getBundleAnalyzerPlugin(analyzeBundle, name) {
 function devServerProxyBypass({ path }) {
     let tpath = path;
 
+    // Normalize CDN path to local
     if (tpath.startsWith('/v1/_cdn/')) {
-        // The CDN is not available in the dev server, so we need to bypass it.
         tpath = tpath.replace(/\/v1\/_cdn\/[^/]+\//, '/');
     }
 
-    if (tpath.startsWith('/css/')
-            || tpath.startsWith('/doc/')
-            || tpath.startsWith('/fonts/')
-            || tpath.startsWith('/images/')
-            || tpath.startsWith('/lang/')
-            || tpath.startsWith('/sounds/')
-            || tpath.startsWith('/static/')
-            || tpath.endsWith('.wasm')) {
+    // Strip query string when checking the filesystem (e.g., ?v=8888)
+    const noQuery = tpath.split('?')[0];
+    const localPath = join(process.cwd(), noQuery);
 
-        return tpath;
+    // Helper: serve locally only if the file actually exists; otherwise proxy
+    const serveIfExistsElseProxy = () => fs.existsSync(localPath) ? tpath : undefined;
+
+    // Static assets that may or may not exist in your dev tree
+    if (
+        tpath.startsWith('/css/') ||
+        tpath.startsWith('/doc/') ||
+        tpath.startsWith('/fonts/') ||
+        tpath.startsWith('/images/') ||
+        tpath.startsWith('/lang/') ||
+        tpath.startsWith('/sounds/') ||
+        tpath.startsWith('/static/') ||
+        tpath.endsWith('.wasm')
+    ) {
+        return serveIfExistsElseProxy();
     }
 
+    // NEW: Serve local config.js if it exists
+    if (tpath === '/config.js') {
+        return fs.existsSync(join(process.cwd(), 'config.js')) ? tpath : undefined;
+    }
+    // /libs handling: prefer local, fall back to proxy (EC2)
     if (tpath.startsWith('/libs/')) {
-        if (tpath.endsWith('.min.js') && !fs.existsSync(join(process.cwd(), tpath))) {
-            return tpath.replace('.min.js', '.js');
+        const noQuery = tpath.split('?')[0];
+
+        // 1) ALWAYS proxy lib-jitsi-meet to the EC2 target (do NOT serve locally)
+        if (noQuery.endsWith('/lib-jitsi-meet.min.js') || noQuery.endsWith('/lib-jitsi-meet.js')) {
+            return; // proxy to EC2
         }
 
-        return tpath;
-    }
+        // 2) Force ONLY your bundle to non-minified so your edits are used
+        if (noQuery.includes('/app.bundle') && noQuery.endsWith('.min.js')) {
+            return tpath.replace('.min.js', '.js'); // serve local dev bundle
+        }
+
+        // 3) Everything else under /libs: proxy (safer for styling/other deps)
+        return; // proxy to EC2
+        }
+
+    // For everything else, use the proxy unless explicitly handled above
+    return;
 }
+
 
 /**
  * The base Webpack configuration to bundle the JavaScript artifacts of

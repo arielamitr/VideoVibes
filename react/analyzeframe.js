@@ -1,7 +1,10 @@
 // analyzeframe.js
+window.__EMOJI_PROBE_ANALYZE__ = true;
+
 import * as faceapi from 'face-api.js';
 
 
+window.__EMOJI_PROBE_ANALYZE__ = true;
 // Create a single reusable canvas and context
 const canvas = document.createElement('canvas');
 const ctx = canvas.getContext('2d');
