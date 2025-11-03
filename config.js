@@ -43,16 +43,16 @@ var config = {
 
         // XMPP MUC domain. FIXME: use XEP-0030 to discover it.
         //muc: 'conference.' + subdomain + 'jitsi-meet.example.com',
-        domain: '35.172.219.146:8443',
-        muc: 'conference.35.172.219.146:8443',
-        focus: 'focus.35.172.219.146:8443'
+        domain: '98.94.3.160:8443',
+        muc: 'conference.98.94.3.160:8443',
+        focus: 'focus.98.94.3.160:8443'
     },
 
     // BOSH URL. FIXME: use XEP-0156 to discover it.
-    bosh: '//35.172.219.146:8443/http-bind',
+    bosh: '//98.94.3.160:8443/http-bind',
 
     // Websocket URL (XMPP)
-    websocket: 'wss://35.172.219.146:8443/xmpp-websocket',
+    websocket: 'wss://98.94.3.160:8443/xmpp-websocket',
 
     // websocketKeepAliveUrl: 'https://jitsi-meet.example.com/' + subdir + '_unlock',
 
