@@ -1,162 +1,224 @@
-// modules/sarcasm/server/index.js
-const express = require('express');
-const cors = require('cors');
-const multer = require('multer');
+import React from 'react';
+import ReactDOM from 'react-dom';
 
-const app = express();
-const upload = multer();
-app.use(cors());
+import { App } from './features/app/components/App.web';
+import { getLogger } from './features/base/logging/functions';
+import Platform from './features/base/react/Platform.web';
+import { getJitsiMeetGlobalNS, getJitsiMeetGlobalNSConnectionTimes } from './features/base/util/helpers';
+import DialInSummaryApp from './features/invite/components/dial-in-summary/web/DialInSummaryApp';
+import PrejoinApp from './features/prejoin/components/web/PrejoinApp';
+import WhiteboardApp from './features/whiteboard/components/web/WhiteboardApp';
+import { computeBrightness } from './analyzeframe';
+import { loadFaceApiModels, analyzeVideoFrame } from './analyzeframe';
 
-// health
-app.get('/sarcasm/health', (_req, res) => res.json({ ok: true }));
 
-// STT provider (Deepgram)
-const { stt } = require('./providers/stt-deepgram');
+const logger = getLogger('app:index.web');
 
-// ---------------- Heuristic-only scorer ----------------
-function heuristicScore(text) {
-  const t = (text || '').toLowerCase().trim();
-  if (!t) return 0;
+const EMOJI_MAP = {
+    neutral: '😐',
+    happy: '😄',
+    sad: '😢',
+    angry: '😡',
+    fearful: '😨',
+    disgusted: '🤢',
+    surprised: '😲'
+};
 
-  // Strong cues
-  const strong = [
-    /(^|\b)yeah right(\b|[!.?,])/,
-    /\bas if\b/,
-    /\b(?:oh )?(?:great|wonderful)\b/,
-    /great\.\s*just great/,
-    /love that for me/,
-    /what a treat/,
-    /amazing\.\s*totally/,
-    /couldn'?t be better/,
-    /just what i needed/,
-    /\blove (?:when|that)\b.*\b(?:not|never|none)\b/
-  ];
 
-  // Weak cues
-  const weak = [
-    /\bso+ great\b/,
-    /\bni+ce\b/,
-    /\bper+fect\b/,
-    /\bawesome\b.*\b(?:not|never)\b/,
-    /\byeah\b.*\bno\b/,
-    /\bno\b.*\byeah\b/,
-    /\bri+ght\b/,
-    /\bsure\b.*\bwhatever\b/,
-    /\blove\b.*\b(?:traffic|meetings|bugs|deadlines)\b/
-  ];
+// Add global loggers.
+window.addEventListener('error', ev => {
+    logger.error(
+        `UnhandledError: ${ev.message}`,
+        `Script: ${ev.filename}`,
+        `Line: ${ev.lineno}`,
+        `Column: ${ev.colno}`,
+        'StackTrace: ', ev.error?.stack);
+});
 
-  let s = 0;
+window.addEventListener('unhandledrejection', ev => {
+    logger.error(
+        `UnhandledPromiseRejection: ${ev.reason}`,
+        'StackTrace: ', ev.reason?.stack);
+});
 
-  for (const r of strong) if (r.test(t)) s += 0.6;
-  for (const r of weak)   if (r.test(t)) s += 0.2;
-
-  // punctuation/emphasis
-  if (/[!?]{2,}/.test(t)) s += 0.15;
-  if (/\bsoooo+\b|\bveee+ry\b|\bgreee+at\b/.test(t)) s += 0.1;
-  if (/"[^"]+"\s*(?:was|is)\s*(?:great|awesome|perfect)/.test(t)) s += 0.15;
-
-  // light length bonus once there’s actual context (prevents 3-word spikes)
-  const wordCount = t.split(/\s+/).filter(Boolean).length;
-  if (wordCount >= 12) s += 0.05;
-
-  return Math.max(0, Math.min(1, s));
+// Workaround for the issue when returning to a page with the back button and
+// the page is loaded from the 'back-forward' cache on iOS which causes nothing
+// to be rendered.
+if (Platform.OS === 'ios') {
+    window.addEventListener('pageshow', event => {
+        // Detect pages loaded from the 'back-forward' cache
+        // (https://webkit.org/blog/516/webkit-page-cache-ii-the-unload-event/)
+        if (event.persisted) {
+            // Maybe there is a more graceful approach but in the moment of
+            // writing nothing else resolves the issue. I tried to execute our
+            // DOMContentLoaded handler but it seems that the 'onpageshow' event
+            // is triggered only when 'window.location.reload()' code exists.
+            window.location.reload();
+        }
+    });
 }
 
-// ---------------- Rolling buffer (per-speaker) ----------------
-const transcriptBuf = new Map();   // pid -> [{ t, time }]
-const BUF_MS = 12000;              // keep last ~12s
-const MIN_WORDS = 6;
-const MIN_CHARS = 40;
-const SCORE_COOLDOWN_MS = 1500;    // throttle classifier calls
-const lastScoreAt = new Map();     // pid -> timestamp ms
+const globalNS = getJitsiMeetGlobalNS();
+const connectionTimes = getJitsiMeetGlobalNSConnectionTimes();
 
-function normText(s = '') {
-  return String(s)
-    .replace(/\s+/g, ' ')
-    .replace(/^\s+|\s+$/g, '')
-    .replace(/(^|[\s])(?:uh|um|erm|like|you know)(?=[\s,.!?]|$)/gi, '$1')
-    .trim();
+// Used to check if the load event has been fired.
+globalNS.hasLoaded = false;
+
+// Used for automated performance tests.
+connectionTimes['index.loaded'] = window.indexLoadedTime;
+
+window.addEventListener('load', () => {
+    connectionTimes['window.loaded'] = window.loadedEventTime;
+    globalNS.hasLoaded = true;
+});
+
+
+
+document.addEventListener('DOMContentLoaded', () => {
+    const now = window.performance.now();
+
+    connectionTimes['document.ready'] = now;
+    logger.log('(TIME) document ready:\t', now);
+});
+
+globalNS.entryPoints = {
+    APP: App,
+    PREJOIN: PrejoinApp,
+    DIALIN: DialInSummaryApp,
+    WHITEBOARD: WhiteboardApp
+};
+
+globalNS.renderEntryPoint = ({
+    Component,
+    props = {},
+    elementId = 'react'
+}) => {
+    /* eslint-disable-next-line react/no-deprecated */
+    ReactDOM.render(
+        <Component { ...props } />,
+        document.getElementById(elementId)
+    );
+};
+
+const overlays = new Map();
+
+function getOrCreateOverlay(video) {
+    if (overlays.has(video)) return overlays.get(video);
+
+    const overlayWrapper = document.createElement('div');
+Object.assign(overlayWrapper.style, {
+    position: 'absolute',
+    top: '0',
+    left: '0',
+    width: '100%',
+    height: '100%',
+    pointerEvents: 'none'
+});
+
+const overlay = document.createElement('div');
+overlay.className = 'brightness-overlay';
+Object.assign(overlay.style, {
+    position: 'absolute',
+    top: '10',
+    left: '10',
+    color: 'red',
+    fontWeight: 'bold',
+    zIndex: 9999,
+    pointerEvents: 'none'
+});
+
+// Function to resize emoji based on container height
+function resizeEmoji() {
+    const containerHeight = overlayWrapper.offsetHeight;
+    overlay.style.fontSize = `${Math.floor(containerHeight * 0.2)}px`;
 }
 
-function appendToBuf(pid, piece) {
-  const now = Date.now();
-  const arr = transcriptBuf.get(pid) || [];
-  const t = normText(piece);
-  if (!t) return;
+// Initial resize
+resizeEmoji();
 
-  if (arr.length && arr[arr.length - 1].t === t) {
-    arr[arr.length - 1].time = now;
-  } else {
-    arr.push({ t, time: now });
-  }
+// Optional: observe changes to wrapper size (for responsive layouts)
+const resizeObserver = new ResizeObserver(resizeEmoji);
+resizeObserver.observe(overlayWrapper);
 
-  const cutoff = now - BUF_MS;
-  while (arr.length && arr[0].time < cutoff) arr.shift();
-  transcriptBuf.set(pid, arr);
+
+    overlayWrapper.appendChild(overlay);
+    video.parentElement.appendChild(overlayWrapper);
+    overlays.set(video, overlay);
+    return overlay;
 }
 
-function getBufferedText(pid) {
-  const arr = transcriptBuf.get(pid) || [];
-  return arr.map(x => x.t).join('. ').replace(/\.\s*\./g, '.');
-}
+const canvas = document.createElement('canvas');
+const ctx = canvas.getContext('2d');
 
-function hasEnoughContext(pid) {
-  const joined = getBufferedText(pid);
-  const words = joined.split(/\s+/).filter(Boolean);
-  return joined.length >= MIN_CHARS && words.length >= MIN_WORDS;
-}
+// Map video element -> { history: [], lastAnalyzed: timestamp }
+const videoExpressionHistory = new Map();
+const HISTORY_DURATION_MS = 5000; // 5 seconds
+const ANALYZE_INTERVAL_MS = 400; // ~2.5 FPS
 
-// ---------------- Ingest endpoint ----------------
-app.post('/sarcasm/chunk', upload.single('audio'), async (req, res) => {
-  try {
-    const participantId = String(req.body?.participantId || 'unknown');
-    const buf = req.file?.buffer;
-    const mime = req.file?.mimetype || 'audio/webm';
-
-    console.log('[sarcasm] recv chunk bytes=', buf?.length, 'mime=', mime, 'pid=', participantId);
-    if (!buf || !buf.length) return res.json([]);
-
-    // STT for this slice
-    const textRaw = await stt(buf, mime);
-    const text = normText(textRaw);
-    console.log('[sarcasm] transcript=', JSON.stringify(text));
-    if (!text) return res.json([]); // no speech
-
-    // Update buffer
-    appendToBuf(participantId, text);
-
-    // Require some context before scoring
-    if (!hasEnoughContext(participantId)) {
-      return res.json([]);
-    }
-
-    // Cooldown
+function updateOverlays() {
     const now = Date.now();
-    const last = lastScoreAt.get(participantId) || 0;
-    if (now - last < SCORE_COOLDOWN_MS) {
-      return res.json([]);
-    }
-    lastScoreAt.set(participantId, now);
+    const videos = document.querySelectorAll('.videocontainer video, .tile-view video, .large-video-container video');
 
-    // Heuristic on buffered text (last ~12s)
-    const joined = getBufferedText(participantId);
-    const score = heuristicScore(joined);
+    videos.forEach(video => {
+        const overlay = getOrCreateOverlay(video);
 
-    console.log('[sarcasm] joined len=', joined.length, '| score=', score.toFixed(3));
-    return res.json([{ participantId, score }]);
-  } catch (e) {
-    console.error('sarcasm/chunk error', e?.response?.data || e);
-    return res.json([]);
-  }
+        if (!videoExpressionHistory.has(video)) {
+            videoExpressionHistory.set(video, { history: [], lastAnalyzed: 0 });
+        }
+
+        const data = videoExpressionHistory.get(video);
+
+        if (now - data.lastAnalyzed < ANALYZE_INTERVAL_MS) {
+            // Skip this frame, use existing overlay
+            const mostFrequent = computeMostFrequent(data.history);
+            overlay.innerText = EMOJI_MAP[mostFrequent] || '❓';
+            return;
+        }
+
+        data.lastAnalyzed = now;
+
+        analyzeVideoFrame(video)
+            .then(expression => {
+                // Push new value with timestamp
+                data.history.push({ expression, timestamp: now });
+
+                // Remove old entries
+                data.history = data.history.filter(h => now - h.timestamp <= HISTORY_DURATION_MS);
+
+                // Update overlay
+                overlay.innerText = EMOJI_MAP[computeMostFrequent(data.history)] || '❓';
+            })
+            .catch(e => {
+                console.error('Error analyzing video frame:', e);
+                overlay.innerText = 'Error';
+            });
+    });
+
+    requestAnimationFrame(updateOverlays);
+}
+
+function computeMostFrequent(history) {
+    if (!history.length) return 'N/A';
+    const freqMap = {};
+    history.forEach(h => {
+        freqMap[h.expression] = (freqMap[h.expression] || 0) + 1;
+    });
+    let mostFrequent = 'N/A';
+    let maxCount = 0;
+    Object.entries(freqMap).forEach(([expr, count]) => {
+        if (count > maxCount) {
+            maxCount = count;
+            mostFrequent = expr;
+        }
+    });
+    return mostFrequent;
+}
+
+
+loadFaceApiModels().then(() => {
+    console.log('Face API models loaded');
+
+    // Everything that depends on the models goes here
+    requestAnimationFrame(updateOverlays);    // other initialization code
 });
 
-// ---------------- Sanity route (heuristic only) ----------------
-app.get('/sarcasm/test', (req, res) => {
-  const q = String(req.query.q || 'yeah right, just what I needed.');
-  const p = heuristicScore(q);
-  res.json({ text: q, prob: p });
-});
-
-// ----------------------------------------------------------------
-const PORT = process.env.PORT || 8081;
-app.listen(PORT, () => console.log('sarcasm server listening on', PORT));
