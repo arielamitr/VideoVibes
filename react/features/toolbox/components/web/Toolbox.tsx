@@ -25,6 +25,7 @@ import {
 import { useKeyboardShortcuts, useToolboxButtons } from '../../hooks.web';
 import { IToolboxButton } from '../../types';
 import HangupButton from '../HangupButton';
+import VideoVibesButton from './VideoVibesButton';
 
 import { EndConferenceButton } from './EndConferenceButton';
 import HangupMenuButton from './HangupMenuButton';
@@ -260,7 +261,10 @@ export default function Toolbox({
                             <Content
                                 { ...rest }
                                 buttonKey = { key }
-                                key = { key } />))}
+                                key = { key } />
+                        ))}
+
+                        <VideoVibesButton buttonKey='videovibes' key='videovibes' />
 
                         {Boolean(overflowMenuButtons.length) && (
                             <OverflowMenuButton
