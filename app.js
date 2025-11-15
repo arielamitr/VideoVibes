@@ -86,9 +86,10 @@ window.APP = {
 import './react';
 
 // === VideoVibes sarcasm bootstrap ===
+// === VideoVibes sarcasm bootstrap ===
 (async function bootstrapSarcasm() {
   // guard & feature flag
-  console.log('[sarcasm] bootstrap starting');                 // <— add
+  console.log('[sarcasm] bootstrap starting');
   if (!window.config?.sarcasm?.enabled) return;
 
   // wait until the JitsiConference object exists (robust on all flows)
@@ -100,14 +101,40 @@ import './react';
   });
 
   const conf = await waitForConference();
-  console.log('[sarcasm] got conference, wiring up');          // <— add
+  console.log('[sarcasm] got conference, wiring up');
 
   // lazy import so we don’t bloat initial bundle
   const { initSarcasm } = await import('./modules/sarcasm/client/sarcasmClient.ts');
-  const { setSarcasmBadge } = await import('./modules/sarcasm/client/overlays.ts');
+  const {
+    setSarcasmBadge,
+    clearAllSarcasmBadges
+  } = await import('./modules/sarcasm/client/overlays.ts');
 
-  initSarcasm(conf, (evt) => {
-    // evt: { participantId, isSarcastic, confidence }
-    setSarcasmBadge(evt.participantId, evt.isSarcastic ? '🤞' : '', evt.confidence);
-  }, window.config.sarcasm);
+  initSarcasm(
+    conf,
+    (evt) => {
+      // evt: { participantId, isSarcastic, confidence }
+      setSarcasmBadge(
+        evt.participantId,
+        evt.isSarcastic ? '🤞' : '',
+        evt.confidence
+      );
+    },
+    window.config.sarcasm
+  );
+
+  // --- Clear stale badges when participants join/leave (layout changes) ---
+  const JitsiMeetJS = window.JitsiMeetJS;
+
+  if (JitsiMeetJS?.events?.conference) {
+    const C = JitsiMeetJS.events.conference;
+
+    const onParticipantChange = (id) => {
+      console.log('[sarcasm] participant change, clearing badges', id);
+      clearAllSarcasmBadges();
+    };
+
+    conf.on(C.USER_JOINED, onParticipantChange);
+    conf.on(C.USER_LEFT, onParticipantChange);
+  }
 })();
