@@ -53,28 +53,53 @@ function getOrCreateOverlay(video: HTMLVideoElement): HTMLElement | null {
   return badge;
 }
 
+
+// helper function for sarcasm badge updates for other participants
+export function clearAllSarcasmBadges() {
+  sarcasmOverlays.forEach((badge) => {
+    badge.textContent = '';
+    badge.removeAttribute('title');
+  });
+}
+
+
+
 // === Public API ===
 export function setSarcasmBadge(
-  participantId: string,
+  participantId: string,  // currently unused, but kept for future multi-user support
   emoji: string,
   confidence?: number
 ) {
-  const videos = document.querySelectorAll<HTMLVideoElement>(
-    [
-      '#largeVideo',
-      '.large-video-container video',
-      '.tile-view video',
-      '.videocontainer video',
-      'video[id^="localVideo_"]',
-      'video[id^="remoteVideo_"]'
-    ].join(', ')
+  const targetVideos: HTMLVideoElement[] = [];
+
+  // 1) Local thumbnails on this client (your own camera tiles)
+  document
+    .querySelectorAll<HTMLVideoElement>('video[id^="localVideo"]')
+    .forEach(v => targetVideos.push(v));
+
+  // 2) Check if there are any remote video elements
+  const remoteVideos = document.querySelectorAll<HTMLVideoElement>(
+    'video[id^="remoteVideo"]'
   );
 
-  videos.forEach(video => {
+  // If there are *no* remote participants, you're alone in the room.
+  // In that case, also treat the main large video as yours.
+  if (remoteVideos.length === 0) {
+    const large = document.querySelector<HTMLVideoElement>('#largeVideo');
+    if (large && !targetVideos.includes(large)) {
+      targetVideos.push(large);
+    }
+  }
+
+  // --- Update overlays for target videos (your tiles) ---
+  targetVideos.forEach(video => {
     const badge = getOrCreateOverlay(video);
-    if (!badge) return;
+    if (!badge) {
+      return;
+    }
 
     badge.textContent = emoji || '';
+
     if (emoji && typeof confidence === 'number') {
       badge.title = `sarcasm ${(confidence * 100).toFixed(0)}%`;
     } else {
@@ -82,5 +107,19 @@ export function setSarcasmBadge(
     }
   });
 
-  console.log('[sarcasm] badges updated', { participantId, emoji, confidence });
+  // --- Clear overlays for NON-target videos (old/stale ones) ---
+  sarcasmOverlays.forEach((badge, video) => {
+    if (!targetVideos.includes(video)) {
+      badge.textContent = '';
+      badge.removeAttribute('title');
+    }
+  });
+
+  console.log('[sarcasm] badges updated', {
+    participantId,
+    emoji,
+    confidence,
+    targetCount: targetVideos.length,
+    hasRemoteVideos: remoteVideos.length > 0
+  });
 }
