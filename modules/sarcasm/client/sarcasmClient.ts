@@ -67,7 +67,11 @@ function recordOneChunk(stream: MediaStream, mime: string, ms: number): Promise<
   });
 }
 
-export function initSarcasm(conference: any, onSarcasm: (e: SarcasmEvent) => void, opts: Options) {
+export function initSarcasm(
+  conference: any,
+  onSarcasm: (e: SarcasmEvent) => void,
+  opts: Options
+) {
   const conf = conference || getJitsiConference();
   if (!conf) {
     console.warn('[sarcasm] no conference instance');
@@ -97,8 +101,22 @@ export function initSarcasm(conference: any, onSarcasm: (e: SarcasmEvent) => voi
 
   (async function loop() {
     while (!cancelled) {
+      // 🔴 NEW: stop if stream is no longer valid
+      const tracks = stream.getAudioTracks();
+      if (
+        !stream ||
+        tracks.length === 0 ||
+        tracks[0].readyState === 'ended'
+      ) {
+        console.log('[sarcasm] stream ended, stopping loop');
+        break;
+      }
+
       const blob = await recordOneChunk(stream, mime, chunkMs);
-      if (!blob || blob.size === 0) continue;
+      if (!blob || blob.size === 0) {
+        // nothing to send this round
+        continue;
+      }
 
       const fd = new FormData();
       fd.append('participantId', participantId);
@@ -120,7 +138,11 @@ export function initSarcasm(conference: any, onSarcasm: (e: SarcasmEvent) => voi
         console.warn('[sarcasm] send error', e);
       }
     }
+
+    console.log('[sarcasm] loop exited');
   })();
 
+  // allow external stop
   return { stop() { cancelled = true; } };
 }
+
