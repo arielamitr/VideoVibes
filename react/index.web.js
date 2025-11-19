@@ -355,7 +355,10 @@ async function updateLearningMode() {
         }
 
         const expr = await analyzeVideoFrame(video);
-        if (!expr) {
+
+        console.log("LearningMode: analyzed expression =", expr);
+        
+        if (!expr || !EMOJI_MAP[expr]) {
             return;
         }
 
@@ -443,7 +446,7 @@ let conferenceJoined = false;
 let loopStarted = false;
 let stopLoop = false;
 
-// ---- Wait for store BEFORE subscribing ----
+// Wait for store BEFORE subscribing 
 
 function waitForStoreReady() {
     if (window.APP?.store) {
@@ -457,8 +460,7 @@ function waitForStoreReady() {
 
 waitForStoreReady();
 
-
-// ---- Actual subscription moved here ----
+// Actual subscription moved here
 
 function setupConferenceSubscription(store) {
     store.subscribe(() => {
@@ -484,8 +486,7 @@ function setupConferenceSubscription(store) {
     });
 }
 
-
-// ---- Start loop only when ready ----
+// Start loop only when ready
 
 function tryStartMasterLoop() {
     if (modelsLoaded && conferenceJoined && !loopStarted) {
@@ -523,7 +524,6 @@ function masterLoop() {
 
     requestAnimationFrame(masterLoop);
 }
-
 
 // ---- Face API load ----
 
