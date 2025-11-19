@@ -274,16 +274,36 @@ function showLearningChoiceUI(targetVideo, options) {
     Object.assign(wrapper.style, {
         all: 'unset',
         position: "absolute",
-        inset: '0 auto auto 0',  // top-left anchor
-        margin: '10px',          // spacing from corner
-        padding: "12px 16px",
-        background: "rgba(0, 0, 0, 0.70)",
-        borderRadius: "10px",
+        inset: '0 auto auto 0',
+        margin: '10px',
+        padding: "16px 20px",
+        background: "rgba(0, 0, 0, 0.75)",
+        borderRadius: "12px",
         display: "flex",
-        gap: "20px",
+        flexDirection: "column",
+        gap: "16px",
         zIndex: 9999999,
         pointerEvents: "auto",
         transform: 'translateX(10%)'
+    });
+
+    // --- Instruction prompt ---
+    const prompt = document.createElement("div");
+    prompt.innerText = "Which emoji best describes this person's emotion over the last 5 seconds?";
+    Object.assign(prompt.style, {
+        color: "white",
+        fontSize: "18px",
+        fontWeight: "600",
+        lineHeight: "1.3",
+        maxWidth: "280px"
+    });
+    wrapper.appendChild(prompt);
+
+    // --- Emoji button row ---
+    const row = document.createElement("div");
+    Object.assign(row.style, {
+        display: "flex",
+        gap: "20px"
     });
 
     options.forEach(opt => {
@@ -293,45 +313,80 @@ function showLearningChoiceUI(targetVideo, options) {
 
         Object.assign(btn.style, {
             all: 'unset',
-            fontSize: '56px',
-            padding: '10px 18px',
+            fontSize: '52px',
+            padding: '8px 14px',
             background: '#fff',
             borderRadius: '8px',
             border: '2px solid #333',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center'
+            justifyContent: 'center',
+            transition: "transform 0.15s ease"
         });
+
+        btn.onmouseenter = () => (btn.style.transform = "scale(1.2)");
+        btn.onmouseleave = () => (btn.style.transform = "scale(1.0)");
 
         btn.onclick = () => {
             console.log("LearningMode: user clicked", opt);
             learningState.userSelection = opt;
         };
 
-        wrapper.appendChild(btn);
+        row.appendChild(btn);
     });
 
+    wrapper.appendChild(row);
     parent.appendChild(wrapper);
     return wrapper;
 }
 
-function showLearningFeedback(isCorrect) {
-    if (!learningState.overlayEl) {
-        return;
-    }
+function showLearningFeedback(isCorrect, correctExpression) {
+    if (!learningState.overlayEl) return;
 
-    learningState.overlayEl.innerHTML = `
+    const wrapper = learningState.overlayEl;
+
+    const emoji = isCorrect ? "✔️" : "❌";
+    const title = isCorrect ? "Correct!" : "Incorrect";
+    const message = isCorrect
+        ? "Nice job! Your selection matches the detected emotion."
+        : `The detected emotion was: ${EMOJI_MAP[correctExpression]} (${correctExpression})`;
+
+    wrapper.innerHTML = `
         <div style="
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
             color: white;
-            font-size: 32px;
-            text-align: center;
-            padding: 12px 24px;
+            font-size: 26px;
+            padding: 16px 28px;
+            background: rgba(0,0,0,0.75);
+            border-radius: 12px;
+            animation: vvFadeOut 2s forwards ease-out;
         ">
-            ${isCorrect ? '✔️ Correct!' : '❌ Incorrect'}
+            <div style="font-size: 46px;">${emoji}</div>
+            <div style="font-weight: 700;">${title}</div>
+            <div style="font-size: 20px; opacity: 0.85;">${message}</div>
         </div>
     `;
+
+    // Remove after 2.2 seconds
+    setTimeout(() => {
+        if (wrapper.parentNode) wrapper.remove();
+    }, 2200);
 }
+
+// Add fade-out animation once globally
+const style = document.createElement("style");
+style.textContent = `
+@keyframes vvFadeOut {
+    0%   { opacity: 1; }
+    75%  { opacity: 1; }
+    100% { opacity: 0; }
+}`;
+document.head.appendChild(style);
+
 
 // ---------- LEARNING MODE LOOP ----------
 
@@ -375,7 +430,7 @@ async function updateLearningMode() {
     if (learningState.userSelection && !learningState.feedbackShown) {
         const isCorrect = learningState.userSelection === learningState.correctExpression;
 
-        showLearningFeedback(isCorrect);
+        showLearningFeedback(isCorrect, learningState.correctExpression);
         learningState.feedbackShown = true;
 
         // After feedback, wait 2s, then clear UI and start cooldown
