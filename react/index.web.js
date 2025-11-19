@@ -360,8 +360,8 @@ function showLearningFeedback(isCorrect, correctExpression) {
             gap: 10px;
             color: white;
             font-size: 26px;
-            padding: 16px 28px;
-            background: rgba(0,0,0,0.75);
+            padding: 8px 14px;
+            background: rgba(0,0,0,1.0);
             border-radius: 12px;
             animation: vvFadeOut 2s forwards ease-out;
         ">
@@ -371,10 +371,9 @@ function showLearningFeedback(isCorrect, correctExpression) {
         </div>
     `;
 
-    // Remove after 2.2 seconds
     setTimeout(() => {
         if (wrapper.parentNode) wrapper.remove();
-    }, 2200);
+    }, 3500);
 }
 
 // Add fade-out animation once globally
@@ -441,7 +440,7 @@ async function updateLearningMode() {
 
             // keep screen blank for LEARNING_REPROMPT_DELAY
             learningCooldownUntil = Date.now() + LEARNING_REPROMPT_DELAY;
-        }, 2000);
+        }, 1600);
 
         return;
     }
