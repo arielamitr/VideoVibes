@@ -107,19 +107,13 @@ const videoExpressionHistory = new Map(); // video -> { history, lastAnalyzed }
 
 const HISTORY_DURATION_MS = 5000;
 const ANALYZE_INTERVAL_MS = 400;
+let LEARNING_REPROMPT_DELAY = 10000;
+
 
 // ---------- Mode helpers ----------
-import { SET_VIDEOVIBES_MODE } from './features/video-vibes/reducer';
 
 function getMode() {
     return window.APP.store.getState()['features/video-vibes']?.mode || 'observation';
-}
-
-function switchToObservation() {
-    window.APP.store.dispatch({
-        type: SET_VIDEOVIBES_MODE,
-        mode: 'observation'
-    });
 }
 
 // We track last mode so we can detect transitions
@@ -228,6 +222,8 @@ const learningState = {
     overlayEl: null
 };
 
+let learningCooldownUntil = 0;
+
 function clearLearningUI() {
     console.log("clearLearningUI called");
 
@@ -248,7 +244,6 @@ function clearLearningUI() {
     learningState.feedbackShown = false;
     learningState.overlayEl = null;
 }
-
 
 function pickLearningTarget() {
     const large = document.querySelector('.large-video-container video');
@@ -347,6 +342,11 @@ async function updateLearningMode() {
 
     // Start a round
     if (!learningState.active) {
+        // If we're in cooldown, don't start a new round yet
+        if (learningCooldownUntil && Date.now() < learningCooldownUntil) {
+            return;
+        }
+
         clearLearningUI();
 
         const video = pickLearningTarget();
@@ -375,18 +375,18 @@ async function updateLearningMode() {
         showLearningFeedback(isCorrect);
         learningState.feedbackShown = true;
 
-        // After feedback, wait 3s then switch back to observation.
+        // After feedback, wait 2s, then clear UI and start cooldown
         setTimeout(() => {
-            console.log("Learning timeout fired → switching to observation");
+            console.log("Learning timeout fired → clearing UI + starting cooldown");
 
             clearLearningUI();
-            switchToObservation();
-        }, 3000);
+
+            // keep screen blank for LEARNING_REPROMPT_DELAY
+            learningCooldownUntil = Date.now() + LEARNING_REPROMPT_DELAY;
+        }, 2000);
 
         return;
     }
-
-    // Otherwise, just idle in this frame.
 }
 
 // ---------- OBSERVATION MODE LOOP ----------
@@ -442,18 +442,16 @@ function updateObservationMode() {
 function masterLoop() {
     const mode = getMode();
 
-    // Detect mode changes and clean UI accordingly
     if (lastMode === null) {
         lastMode = mode;
     } else if (mode !== lastMode) {
         if (mode === 'learning') {
-            // Leaving observation → clear its overlays
             clearObservationUI();
-            clearLearningUI(); // just in case
-        } else if (mode === 'observation') {
-            // Leaving learning → clear its overlays
             clearLearningUI();
-            clearObservationUI(); // fresh start for emojis
+            learningCooldownUntil = 0;
+        } else if (mode === 'observation') {
+            clearLearningUI();
+            clearObservationUI();
         }
 
         lastMode = mode;
