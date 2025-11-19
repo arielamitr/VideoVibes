@@ -438,8 +438,67 @@ function updateObservationMode() {
 }
 
 // ---------- MASTER LOOP WITH MODE TRANSITIONS ----------
+let modelsLoaded = false;
+let conferenceJoined = false;
+let loopStarted = false;
+let stopLoop = false;
+
+// ---- Wait for store BEFORE subscribing ----
+
+function waitForStoreReady() {
+    if (window.APP?.store) {
+        console.log("Store is ready → subscribing to conference events");
+        setupConferenceSubscription(window.APP.store);
+    } else {
+        console.log("Store not ready yet… retrying");
+        setTimeout(waitForStoreReady, 50);
+    }
+}
+
+waitForStoreReady();
+
+
+// ---- Actual subscription moved here ----
+
+function setupConferenceSubscription(store) {
+    store.subscribe(() => {
+        const state = store.getState();
+        const conf = state['features/base/conference']?.conference;
+
+        if (conf && !conferenceJoined) {
+            console.log("Conference joined");
+            conferenceJoined = true;
+            stopLoop = false;
+            tryStartMasterLoop();
+        }
+
+        if (!conf && conferenceJoined) {
+            console.log("Conference left → stopping VideoVibes");
+            conferenceJoined = false;
+            loopStarted = false;
+            stopLoop = true;
+
+            clearLearningUI();
+            clearObservationUI();
+        }
+    });
+}
+
+
+// ---- Start loop only when ready ----
+
+function tryStartMasterLoop() {
+    if (modelsLoaded && conferenceJoined && !loopStarted) {
+        console.log("Starting VideoVibes masterLoop()");
+        loopStarted = true;
+        stopLoop = false;
+        requestAnimationFrame(masterLoop);
+    }
+}
 
 function masterLoop() {
+    if (stopLoop) return;
+
     const mode = getMode();
 
     if (lastMode === null) {
@@ -453,7 +512,6 @@ function masterLoop() {
             clearLearningUI();
             clearObservationUI();
         }
-
         lastMode = mode;
     }
 
@@ -466,8 +524,11 @@ function masterLoop() {
     requestAnimationFrame(masterLoop);
 }
 
-// Start once Face API is ready
+
+// ---- Face API load ----
+
 loadFaceApiModels().then(() => {
-    console.log('Face API models loaded');
-    requestAnimationFrame(masterLoop);
+    modelsLoaded = true;
+    console.log("Face API models loaded");
+    tryStartMasterLoop();
 });
