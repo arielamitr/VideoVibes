@@ -22,13 +22,6 @@ export async function loadFaceApiModels() {
 
 
 export async function analyzeVideoFrame(videoElement) {
-    const mode = window.APP.store.getState()['features/video-vibes']?.mode || 'observation';
-
-    if (mode === 'learning') {
-        // Learning Mode
-    }
-    
-
     if (!videoElement) return null;
 
     const detections = await faceapi

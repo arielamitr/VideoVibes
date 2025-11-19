@@ -100,68 +100,306 @@ globalNS.renderEntryPoint = ({
     );
 };
 
-const overlays = new Map();
+// ========== VIDEO VIBES OVERLAYS & MODES ==========
 
-function getOrCreateOverlay(video) {
-    if (overlays.has(video)) return overlays.get(video);
+const overlays = new Map(); // video -> emoji overlay <div>
+const videoExpressionHistory = new Map(); // video -> { history, lastAnalyzed }
 
-    const overlayWrapper = document.createElement('div');
-Object.assign(overlayWrapper.style, {
-    position: 'absolute',
-    top: '0',
-    left: '0',
-    width: '100%',
-    height: '100%',
-    pointerEvents: 'none'
-});
+const HISTORY_DURATION_MS = 5000;
+const ANALYZE_INTERVAL_MS = 400;
 
-const overlay = document.createElement('div');
-overlay.className = 'brightness-overlay';
-Object.assign(overlay.style, {
-    position: 'absolute',
-    top: '10',
-    left: '10',
-    color: 'red',
-    fontWeight: 'bold',
-    zIndex: 9999,
-    pointerEvents: 'none'
-});
+// ---------- Mode helpers ----------
+import { SET_VIDEOVIBES_MODE } from './features/video-vibes/reducer';
 
-// Function to resize emoji based on container height
-function resizeEmoji() {
-    const containerHeight = overlayWrapper.offsetHeight;
-    overlay.style.fontSize = `${Math.floor(containerHeight * 0.2)}px`;
+function getMode() {
+    return window.APP.store.getState()['features/video-vibes']?.mode || 'observation';
 }
 
-// Initial resize
-resizeEmoji();
+function switchToObservation() {
+    window.APP.store.dispatch({
+        type: SET_VIDEOVIBES_MODE,
+        mode: 'observation'
+    });
+}
 
-// Optional: observe changes to wrapper size (for responsive layouts)
-const resizeObserver = new ResizeObserver(resizeEmoji);
-resizeObserver.observe(overlayWrapper);
+// We track last mode so we can detect transitions
+let lastMode = null;
 
+// ---------- Observation overlay helpers ----------
 
-    overlayWrapper.appendChild(overlay);
-    video.parentElement.appendChild(overlayWrapper);
+function getOrCreateOverlay(video) {
+    if (overlays.has(video)) {
+        return overlays.get(video);
+    }
+
+    // Force the overlay to attach to the nearest video tile container,
+    // not just any parent.
+    const parent = video.closest('.videocontainer, .large-video-container');
+
+    if (!parent) {
+        console.warn('Video has no valid container:', video);
+        return null;
+    }
+
+    const cs = getComputedStyle(parent);
+    if (cs.position === 'static') {
+        parent.style.position = 'relative';
+    }
+
+    const wrapper = document.createElement('div');
+    Object.assign(wrapper.style, {
+        position: 'absolute',
+        inset: '0',
+        pointerEvents: 'none'
+    });
+
+    const overlay = document.createElement('div');
+    Object.assign(overlay.style, {
+        position: 'absolute',
+        top: '10px',
+        left: '10px',
+        fontWeight: 'bold',
+        color: 'red',
+        zIndex: 9999,
+        pointerEvents: 'none'
+    });
+
+    const resize = () => {
+        const h = parent.offsetHeight || 300;
+        overlay.style.fontSize = Math.floor(h * 0.2) + 'px';
+    };
+
+    resize();
+
+    const ro = new ResizeObserver(resize);
+    ro.observe(parent);
+
+    wrapper.appendChild(overlay);
+    parent.appendChild(wrapper);
+
     overlays.set(video, overlay);
     return overlay;
 }
 
-const canvas = document.createElement('canvas');
-const ctx = canvas.getContext('2d');
+function clearObservationUI() {
+    overlays.forEach((overlay, video) => {
+        const wrapper = overlay.parentElement;
+        if (wrapper && wrapper.parentElement) {
+            wrapper.parentElement.removeChild(wrapper);
+        }
+    });
 
-// Map video element -> { history: [], lastAnalyzed: timestamp }
-const videoExpressionHistory = new Map();
-const HISTORY_DURATION_MS = 5000; // 5 seconds
-const ANALYZE_INTERVAL_MS = 400; // ~2.5 FPS
+    overlays.clear();
+    videoExpressionHistory.clear();
+}
 
-function updateOverlays() {
+function computeMostFrequent(history) {
+    if (!history.length) {
+        return 'N/A';
+    }
+
+    const freqMap = {};
+    history.forEach(h => {
+        freqMap[h.expression] = (freqMap[h.expression] || 0) + 1;
+    });
+
+    let most = 'N/A';
+    let maxCount = 0;
+
+    Object.entries(freqMap).forEach(([expr, count]) => {
+        if (count > maxCount) {
+            maxCount = count;
+            most = expr;
+        }
+    });
+
+    return most;
+}
+
+// ---------- LEARNING MODE STATE & UI ----------
+
+const learningState = {
+    active: false,
+    targetVideo: null,
+    correctExpression: null,
+    options: [],
+    userSelection: null,
+    feedbackShown: false,
+    overlayEl: null
+};
+
+function clearLearningUI() {
+    console.log("clearLearningUI called");
+
+    if (learningState.overlayEl) {
+        learningState.overlayEl.remove();
+    }
+
+    document.querySelectorAll(".vv-learning-wrapper").forEach(el => {
+        console.log("Removing learning wrapper:", el);
+        el.remove();         
+    });
+
+    learningState.active = false;
+    learningState.targetVideo = null;
+    learningState.correctExpression = null;
+    learningState.options = [];
+    learningState.userSelection = null;
+    learningState.feedbackShown = false;
+    learningState.overlayEl = null;
+}
+
+
+function pickLearningTarget() {
+    const large = document.querySelector('.large-video-container video');
+    if (large) {
+        return large;
+    }
+
+    const vids = document.querySelectorAll('.videocontainer video, .tile-view video');
+    return vids[0] || null;
+}
+
+function generateTwoOptions(correct) {
+    const all = Object.keys(EMOJI_MAP);
+    const distractors = all.filter(e => e !== correct);
+    const wrong = distractors[Math.floor(Math.random() * distractors.length)];
+
+    // randomize order
+    return [correct, wrong].sort(() => Math.random() - 0.5);
+}
+
+function showLearningChoiceUI(targetVideo, options) {
+    const parent = targetVideo.closest('.videocontainer, .large-video-container');
+    if (!parent) return;
+
+    const wrapper = document.createElement("div");
+    wrapper.classList.add("vv-learning-wrapper");
+
+    Object.assign(wrapper.style, {
+        all: 'unset',
+        position: "absolute",
+        inset: '0 auto auto 0',  // top-left anchor
+        margin: '10px',          // spacing from corner
+        padding: "12px 16px",
+        background: "rgba(0, 0, 0, 0.70)",
+        borderRadius: "10px",
+        display: "flex",
+        gap: "20px",
+        zIndex: 9999999,
+        pointerEvents: "auto",
+        transform: 'translateX(10%)'
+    });
+
+    options.forEach(opt => {
+        const btn = document.createElement('button');
+        btn.innerText = EMOJI_MAP[opt];
+        btn.dataset.choice = opt;
+
+        Object.assign(btn.style, {
+            all: 'unset',
+            fontSize: '56px',
+            padding: '10px 18px',
+            background: '#fff',
+            borderRadius: '8px',
+            border: '2px solid #333',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+        });
+
+        btn.onclick = () => {
+            console.log("LearningMode: user clicked", opt);
+            learningState.userSelection = opt;
+        };
+
+        wrapper.appendChild(btn);
+    });
+
+    parent.appendChild(wrapper);
+    return wrapper;
+}
+
+function showLearningFeedback(isCorrect) {
+    if (!learningState.overlayEl) {
+        return;
+    }
+
+    learningState.overlayEl.innerHTML = `
+        <div style="
+            color: white;
+            font-size: 32px;
+            text-align: center;
+            padding: 12px 24px;
+        ">
+            ${isCorrect ? '✔️ Correct!' : '❌ Incorrect'}
+        </div>
+    `;
+}
+
+// ---------- LEARNING MODE LOOP ----------
+
+async function updateLearningMode() {
+    if (getMode() !== 'learning') {
+        return;
+    }
+
+    // Start a round
+    if (!learningState.active) {
+        clearLearningUI();
+
+        const video = pickLearningTarget();
+        if (!video) {
+            return;
+        }
+
+        const expr = await analyzeVideoFrame(video);
+        if (!expr) {
+            return;
+        }
+
+        learningState.targetVideo = video;
+        learningState.correctExpression = expr;
+        learningState.options = generateTwoOptions(expr);
+        learningState.overlayEl = showLearningChoiceUI(video, learningState.options);
+        learningState.active = true;
+
+        return;
+    }
+
+    // Wait for user to click
+    if (learningState.userSelection && !learningState.feedbackShown) {
+        const isCorrect = learningState.userSelection === learningState.correctExpression;
+
+        showLearningFeedback(isCorrect);
+        learningState.feedbackShown = true;
+
+        // After feedback, wait 3s then switch back to observation.
+        setTimeout(() => {
+            console.log("Learning timeout fired → switching to observation");
+
+            clearLearningUI();
+            switchToObservation();
+        }, 3000);
+
+        return;
+    }
+
+    // Otherwise, just idle in this frame.
+}
+
+// ---------- OBSERVATION MODE LOOP ----------
+
+function updateObservationMode() {
+    if (getMode() !== 'observation') {
+        return;
+    }
+
     const now = Date.now();
-    const videos = document.querySelectorAll('.videocontainer video, .tile-view video, .large-video-container video');
-
-    // NEW — read mode from Jitsi global Redux store
-    const store = window.APP.store;
-    const mode = store.getState()['features/video-vibes']?.mode || 'observation';
+    const videos = document.querySelectorAll(
+        '.videocontainer video, .tile-view video, .large-video-container video'
+    );
 
     videos.forEach(video => {
         const overlay = getOrCreateOverlay(video);
@@ -172,16 +410,10 @@ function updateOverlays() {
 
         const data = videoExpressionHistory.get(video);
 
-        // Throttle frame analysis
         if (now - data.lastAnalyzed < ANALYZE_INTERVAL_MS) {
             const freq = computeMostFrequent(data.history);
             const emoji = EMOJI_MAP[freq] || '❓';
-
-            overlay.innerText =
-                mode === 'learning'
-                    ? `${emoji}  ${freq}`
-                    : emoji;
-
+            overlay.innerText = emoji;
             return;
         }
 
@@ -190,47 +422,54 @@ function updateOverlays() {
         analyzeVideoFrame(video)
             .then(expression => {
                 data.history.push({ expression, timestamp: now });
-                data.history = data.history.filter(h => now - h.timestamp <= HISTORY_DURATION_MS);
+                data.history = data.history.filter(
+                    h => now - h.timestamp <= HISTORY_DURATION_MS
+                );
 
                 const freq = computeMostFrequent(data.history);
                 const emoji = EMOJI_MAP[freq] || '❓';
-
-                overlay.innerText =
-                    mode === 'learning'
-                        ? `${emoji}  ${freq}`
-                        : emoji;
+                overlay.innerText = emoji;
             })
             .catch(err => {
                 console.error('Error analyzing video frame:', err);
                 overlay.innerText = 'Error';
             });
     });
-
-    requestAnimationFrame(updateOverlays);
 }
 
-function computeMostFrequent(history) {
-    if (!history.length) return 'N/A';
-    const freqMap = {};
-    history.forEach(h => {
-        freqMap[h.expression] = (freqMap[h.expression] || 0) + 1;
-    });
-    let mostFrequent = 'N/A';
-    let maxCount = 0;
-    Object.entries(freqMap).forEach(([expr, count]) => {
-        if (count > maxCount) {
-            maxCount = count;
-            mostFrequent = expr;
+// ---------- MASTER LOOP WITH MODE TRANSITIONS ----------
+
+function masterLoop() {
+    const mode = getMode();
+
+    // Detect mode changes and clean UI accordingly
+    if (lastMode === null) {
+        lastMode = mode;
+    } else if (mode !== lastMode) {
+        if (mode === 'learning') {
+            // Leaving observation → clear its overlays
+            clearObservationUI();
+            clearLearningUI(); // just in case
+        } else if (mode === 'observation') {
+            // Leaving learning → clear its overlays
+            clearLearningUI();
+            clearObservationUI(); // fresh start for emojis
         }
-    });
-    return mostFrequent;
+
+        lastMode = mode;
+    }
+
+    if (mode === 'learning') {
+        updateLearningMode();
+    } else {
+        updateObservationMode();
+    }
+
+    requestAnimationFrame(masterLoop);
 }
 
-
+// Start once Face API is ready
 loadFaceApiModels().then(() => {
     console.log('Face API models loaded');
-
-    // Everything that depends on the models goes here
-    requestAnimationFrame(updateOverlays);    // other initialization code
+    requestAnimationFrame(masterLoop);
 });
-
