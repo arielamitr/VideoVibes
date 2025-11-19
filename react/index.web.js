@@ -159,6 +159,10 @@ function updateOverlays() {
     const now = Date.now();
     const videos = document.querySelectorAll('.videocontainer video, .tile-view video, .large-video-container video');
 
+    // NEW — read mode from Jitsi global Redux store
+    const store = window.APP.store;
+    const mode = store.getState()['features/video-vibes']?.mode || 'observation';
+
     videos.forEach(video => {
         const overlay = getOrCreateOverlay(video);
 
@@ -168,10 +172,16 @@ function updateOverlays() {
 
         const data = videoExpressionHistory.get(video);
 
+        // Throttle frame analysis
         if (now - data.lastAnalyzed < ANALYZE_INTERVAL_MS) {
-            // Skip this frame, use existing overlay
-            const mostFrequent = computeMostFrequent(data.history);
-            overlay.innerText = EMOJI_MAP[mostFrequent] || '❓';
+            const freq = computeMostFrequent(data.history);
+            const emoji = EMOJI_MAP[freq] || '❓';
+
+            overlay.innerText =
+                mode === 'learning'
+                    ? `${emoji}  ${freq}`
+                    : emoji;
+
             return;
         }
 
@@ -179,17 +189,19 @@ function updateOverlays() {
 
         analyzeVideoFrame(video)
             .then(expression => {
-                // Push new value with timestamp
                 data.history.push({ expression, timestamp: now });
-
-                // Remove old entries
                 data.history = data.history.filter(h => now - h.timestamp <= HISTORY_DURATION_MS);
 
-                // Update overlay
-                overlay.innerText = EMOJI_MAP[computeMostFrequent(data.history)] || '❓';
+                const freq = computeMostFrequent(data.history);
+                const emoji = EMOJI_MAP[freq] || '❓';
+
+                overlay.innerText =
+                    mode === 'learning'
+                        ? `${emoji}  ${freq}`
+                        : emoji;
             })
-            .catch(e => {
-                console.error('Error analyzing video frame:', e);
+            .catch(err => {
+                console.error('Error analyzing video frame:', err);
                 overlay.innerText = 'Error';
             });
     });

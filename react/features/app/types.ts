@@ -177,3 +177,9 @@ export interface IReduxState {
 export interface IReloadNowOptions {
     hidePrejoin?: boolean;
 }
+
+export interface IReduxState {
+    ['features/video-vibes']?: {
+        mode: string;
+    };
+}
