@@ -14,7 +14,7 @@ import { loadFaceApiModels, analyzeVideoFrame } from './analyzeframe';
 
 const logger = getLogger('app:index.web');
 
-const EMOJI_MAP = {
+const DEFAULT_EMOJI_MAP = {
     neutral: '😐',
     happy: '😄',
     sad: '😢',
@@ -23,6 +23,9 @@ const EMOJI_MAP = {
     disgusted: '🤢',
     surprised: '😲'
 };
+
+const EMOJI_MAP = { ...DEFAULT_EMOJI_MAP };
+
 
 
 // Add global loggers.
@@ -79,6 +82,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     connectionTimes['document.ready'] = now;
     logger.log('(TIME) document ready:\t', now);
+    initEmojiConfigUI();
 });
 
 globalNS.entryPoints = {
@@ -109,6 +113,211 @@ const HISTORY_DURATION_MS = 5000;
 const ANALYZE_INTERVAL_MS = 400;
 let LEARNING_REPROMPT_DELAY = 10000;
 
+// === VideoVibes interval slider (bottom-right) ===
+let vvIntervalSliderRoot = null;
+
+function ensureIntervalSlider() {
+    if (vvIntervalSliderRoot) {
+        return;
+    }
+
+    const wrapper = document.createElement('div');
+    wrapper.id = 'vv-interval-slider';
+    Object.assign(wrapper.style, {
+        position: 'fixed',
+        right: '16px',
+        bottom: '16px',
+        zIndex: 9999999,
+        background: 'rgba(0, 0, 0, 0.85)',
+        color: '#fff',
+        padding: '10px 14px',
+        borderRadius: '10px',
+        fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
+        fontSize: '13px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '6px',
+        pointerEvents: 'auto',
+        boxShadow: '0 4px 10px rgba(0,0,0,0.4)'
+    });
+
+    const title = document.createElement('div');
+    title.textContent = 'VideoVibes quiz interval';
+    title.style.fontWeight = '600';
+
+    const valueLabel = document.createElement('div');
+    valueLabel.style.opacity = '0.9';
+
+    const setLabel = (ms) => {
+        const seconds = Math.round(ms / 1000);
+        valueLabel.textContent = `${seconds}s between questions`;
+    };
+    setLabel(LEARNING_REPROMPT_DELAY);
+
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = '5';
+    slider.max = '60';
+    slider.step = '1';
+    slider.value = String(Math.round(LEARNING_REPROMPT_DELAY / 1000));
+    slider.style.width = '200px';
+
+    slider.addEventListener('input', () => {
+        const seconds = Number(slider.value) || 10;
+        LEARNING_REPROMPT_DELAY = seconds * 1000;
+        setLabel(LEARNING_REPROMPT_DELAY);
+    });
+
+    wrapper.appendChild(title);
+    wrapper.appendChild(valueLabel);
+    wrapper.appendChild(slider);
+
+    document.body.appendChild(wrapper);
+    vvIntervalSliderRoot = wrapper;
+}
+
+function destroyIntervalSlider() {
+    if (vvIntervalSliderRoot && vvIntervalSliderRoot.parentNode) {
+        vvIntervalSliderRoot.parentNode.removeChild(vvIntervalSliderRoot);
+    }
+    vvIntervalSliderRoot = null;
+}
+
+// ========== EMOJI CONFIG UI ==========
+
+let vvEmojiPanel = null;
+let vvEmojiToggleButton = null;
+
+function initEmojiConfigUI() {
+    // Only create once
+    if (vvEmojiPanel || !document.body) {
+        return;
+    }
+
+    // ---- Panel container ----
+    const panel = document.createElement('div');
+    panel.className = 'vv-emoji-panel';
+
+    Object.assign(panel.style, {
+        position: 'fixed',
+        right: '20px',
+        bottom: '140px',
+        padding: '12px 14px',
+        background: 'rgba(0, 0, 0, 0.85)',
+        borderRadius: '10px',
+        color: '#fff',
+        fontSize: '14px',
+        display: 'none',      // hidden by default
+        flexDirection: 'column',
+        gap: '8px',
+        zIndex: 9999999,
+        maxWidth: '260px'
+    });
+
+    // Title row
+    const titleRow = document.createElement('div');
+    Object.assign(titleRow.style, {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: '4px',
+        fontWeight: '600'
+    });
+
+    const title = document.createElement('span');
+    title.textContent = 'Customize emojis';
+
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '✕';
+    Object.assign(closeBtn.style, {
+        all: 'unset',
+        cursor: 'pointer',
+        padding: '2px 6px',
+        borderRadius: '6px',
+        background: 'rgba(255,255,255,0.1)'
+    });
+    closeBtn.onclick = () => {
+        panel.style.display = 'none';
+    };
+
+    titleRow.appendChild(title);
+    titleRow.appendChild(closeBtn);
+    panel.appendChild(titleRow);
+
+    // Helper: build one row (label + input)
+    function addEmojiRow(key) {
+        const row = document.createElement('div');
+        Object.assign(row.style, {
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '6px'
+        });
+
+        const label = document.createElement('span');
+        label.textContent = key;
+        label.style.textTransform = 'capitalize';
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = EMOJI_MAP[key];
+        input.maxLength = 4; // allow multi-char emoji/combos
+        Object.assign(input.style, {
+            width: '60px',
+            textAlign: 'center',
+            borderRadius: '6px',
+            border: '1px solid #444',
+            padding: '2px 4px',
+            background: '#222',
+            color: '#fff'
+        });
+
+        input.addEventListener('input', () => {
+            const v = input.value.trim();
+            // fallback to default if cleared
+            EMOJI_MAP[key] = v || DEFAULT_EMOJI_MAP[key];
+        });
+
+        row.appendChild(label);
+        row.appendChild(input);
+        panel.appendChild(row);
+    }
+
+    // Add rows for each emotion
+    Object.keys(DEFAULT_EMOJI_MAP).forEach(addEmojiRow);
+
+    document.body.appendChild(panel);
+    vvEmojiPanel = panel;
+
+    // ---- Toggle button ----
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = 'vv-emoji-toggle';
+    toggleBtn.textContent = '🙂 Emojis';
+    Object.assign(toggleBtn.style, {
+        position: 'fixed',
+        right: '20px',
+        bottom: '100px',
+        padding: '6px 10px',
+        background: 'rgba(0,0,0,0.8)',
+        color: '#fff',
+        borderRadius: '999px',
+        border: '1px solid #555',
+        cursor: 'pointer',
+        fontSize: '13px',
+        zIndex: 9999999
+    });
+
+    toggleBtn.onclick = () => {
+        if (!vvEmojiPanel) {
+            return;
+        }
+        vvEmojiPanel.style.display =
+            vvEmojiPanel.style.display === 'none' ? 'flex' : 'none';
+    };
+
+    document.body.appendChild(toggleBtn);
+    vvEmojiToggleButton = toggleBtn;
+}
 
 // ---------- Mode helpers ----------
 
@@ -536,6 +745,7 @@ function setupConferenceSubscription(store) {
 
             clearLearningUI();
             clearObservationUI();
+            destroyIntervalSlider();
         }
     });
 }
@@ -563,9 +773,11 @@ function masterLoop() {
             clearObservationUI();
             clearLearningUI();
             learningCooldownUntil = 0;
+            ensureIntervalSlider();
         } else if (mode === 'observation') {
             clearLearningUI();
             clearObservationUI();
+            destroyIntervalSlider();
         }
         lastMode = mode;
     }
