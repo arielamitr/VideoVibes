@@ -53,7 +53,7 @@
     "abab": "2.0.6",
     "allure-commandline": "2.32.0",
     "amplitude-js": "8.21.9",
-    "axios": "^1.13.1",
+    "axios": "^1.13.2",
     "base64-js": "1.5.1",
     "bc-css-flags": "3.0.0",
     "clipboard-copy": "4.0.1",

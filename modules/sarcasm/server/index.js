@@ -2,6 +2,7 @@
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
+const axios = require('axios');   // ⬅️ add this
 
 const app = express();
 const upload = multer();
@@ -232,6 +233,38 @@ function sarcasmScore(text) {
   return Math.max(0, Math.min(1, score));
 }
 
+// ===================== ML INTEGRATION (Python TF-IDF + LR) =====================
+
+async function getMlSarcasmScore(text) {
+  const joined = String(text || '').trim();
+  if (!joined) return 0;
+
+  try {
+    const resp = await axios.post(
+      'http://127.0.0.1:8000/score',
+      { text: joined },
+      { timeout: 100 } // ms; keep this small because it's real-time
+    );
+
+    const score =
+      resp &&
+      resp.data &&
+      typeof resp.data.score === 'number'
+        ? resp.data.score
+        : null;
+
+    if (score === null || Number.isNaN(score)) {
+      throw new Error('Invalid score from ML service');
+    }
+
+    // Clamp to [0, 1] just in case
+    return Math.max(0, Math.min(1, score));
+  } catch (err) {
+    console.warn('[sarcasm] ML service failed, falling back to heuristic:', err.message);
+    // Fallback: your existing feature-based heuristic
+    return sarcasmScore(joined);
+  }
+}
 // ===================== Rolling buffer (per-speaker) =====================
 const transcriptBuf = new Map();   // pid -> [{ t, time }]
 const BUF_MS = 12000;              // keep last ~12s
@@ -309,9 +342,9 @@ app.post('/sarcasm/chunk', upload.single('audio'), async (req, res) => {
     }
     lastScoreAt.set(participantId, now);
 
-    // New feature-based sarcasm score on buffered text (last ~12s)
+    // ML-based sarcasm score on buffered text (with heuristic fallback)
     const joined = getBufferedText(participantId);
-    const score = sarcasmScore(joined);
+    const score = await getMlSarcasmScore(joined);
 
     console.log('[sarcasm] joined len=', joined.length, '| score=', score.toFixed(3));
     return res.json([{ participantId, score }]);
@@ -323,12 +356,20 @@ app.post('/sarcasm/chunk', upload.single('audio'), async (req, res) => {
 
 // ===================== Sanity route =====================
 
-app.get('/sarcasm/test', (req, res) => {
+app.get('/sarcasm/test', async (req, res) => {
   const q = String(req.query.q || 'yeah right, just what I needed.');
   const legacy = legacyHeuristicScore(q);
-  const prob = sarcasmScore(q);
-  res.json({ text: q, prob, legacy });
+  const featureProb = sarcasmScore(q);           // old feature-based combo
+  const mlProb = await getMlSarcasmScore(q);     // Python model (with fallback)
+
+  res.json({
+    text: q,
+    mlProb,
+    featureProb,
+    legacy
+  });
 });
+
 
 // ----------------------------------------------------------------
 const PORT = process.env.PORT || 8081;
