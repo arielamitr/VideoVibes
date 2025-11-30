@@ -10,6 +10,8 @@ import PrejoinApp from './features/prejoin/components/web/PrejoinApp';
 import WhiteboardApp from './features/whiteboard/components/web/WhiteboardApp';
 import { computeBrightness } from './analyzeframe';
 import { loadFaceApiModels, analyzeVideoFrame } from './analyzeframe';
+import { EmojiButton } from '@joeattardi/emoji-button';
+
 
 
 const logger = getLogger('app:index.web');
@@ -190,14 +192,11 @@ let vvEmojiToggleButton = null;
 
 function initEmojiConfigUI() {
     // Only create once
-    if (vvEmojiPanel || !document.body) {
-        return;
-    }
+    if (vvEmojiPanel || !document.body) return;
 
     // ---- Panel container ----
     const panel = document.createElement('div');
     panel.className = 'vv-emoji-panel';
-
     Object.assign(panel.style, {
         position: 'fixed',
         right: '20px',
@@ -207,7 +206,7 @@ function initEmojiConfigUI() {
         borderRadius: '10px',
         color: '#fff',
         fontSize: '14px',
-        display: 'none',      // hidden by default
+        display: 'none',
         flexDirection: 'column',
         gap: '8px',
         zIndex: 9999999,
@@ -236,15 +235,13 @@ function initEmojiConfigUI() {
         borderRadius: '6px',
         background: 'rgba(255,255,255,0.1)'
     });
-    closeBtn.onclick = () => {
-        panel.style.display = 'none';
-    };
+    closeBtn.onclick = () => { panel.style.display = 'none'; };
 
     titleRow.appendChild(title);
     titleRow.appendChild(closeBtn);
     panel.appendChild(titleRow);
 
-    // Helper: build one row (label + input)
+    // ---- Add emoji row ----
     function addEmojiRow(key) {
         const row = document.createElement('div');
         Object.assign(row.style, {
@@ -261,7 +258,7 @@ function initEmojiConfigUI() {
         const input = document.createElement('input');
         input.type = 'text';
         input.value = EMOJI_MAP[key];
-        input.maxLength = 4; // allow multi-char emoji/combos
+        input.maxLength = 4;
         Object.assign(input.style, {
             width: '60px',
             textAlign: 'center',
@@ -269,21 +266,28 @@ function initEmojiConfigUI() {
             border: '1px solid #444',
             padding: '2px 4px',
             background: '#222',
-            color: '#fff'
+            color: '#fff',
+            cursor: 'pointer'
         });
 
-        input.addEventListener('input', () => {
-            const v = input.value.trim();
-            // fallback to default if cleared
-            EMOJI_MAP[key] = v || DEFAULT_EMOJI_MAP[key];
+        // ---- Emoji Picker Integration ----
+        const picker = new EmojiButton({ position: 'top-start', autoHide: true });
+
+        picker.on('emoji', selection => {
+            const emojiChar = typeof selection === 'string' ? selection : selection.emoji || '';
+            input.value = emojiChar;
+            EMOJI_MAP[key] = emojiChar;
+            picker.hidePicker();
         });
+
+        // Only open on click, not focus
+        input.addEventListener('click', () => picker.showPicker(input));
 
         row.appendChild(label);
         row.appendChild(input);
         panel.appendChild(row);
     }
 
-    // Add rows for each emotion
     Object.keys(DEFAULT_EMOJI_MAP).forEach(addEmojiRow);
 
     document.body.appendChild(panel);
@@ -308,16 +312,15 @@ function initEmojiConfigUI() {
     });
 
     toggleBtn.onclick = () => {
-        if (!vvEmojiPanel) {
-            return;
-        }
-        vvEmojiPanel.style.display =
-            vvEmojiPanel.style.display === 'none' ? 'flex' : 'none';
+        if (!vvEmojiPanel) return;
+        vvEmojiPanel.style.display = vvEmojiPanel.style.display === 'none' ? 'flex' : 'none';
     };
 
     document.body.appendChild(toggleBtn);
     vvEmojiToggleButton = toggleBtn;
 }
+
+
 
 // ---------- Mode helpers ----------
 
