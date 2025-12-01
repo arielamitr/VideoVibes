@@ -27,9 +27,13 @@ function getOrCreateOverlay(video: HTMLVideoElement): HTMLElement | null {
 
   const badge = document.createElement('div');
   badge.className = 'sarcasm-badge';
+
+  const isLargeVideo = video.id === 'largeVideo';
+
   Object.assign(badge.style, {
     position: 'absolute',
-    bottom: '8px',
+    // tiles stay at 8px, large video gets pushed way up
+    bottom: isLargeVideo ? '100px' : '8px',  // tweak 100px as needed
     right: '8px',
     fontWeight: 'bold',
     textShadow: '0 1px 2px rgba(0,0,0,.6)',
@@ -41,7 +45,7 @@ function getOrCreateOverlay(video: HTMLVideoElement): HTMLElement | null {
     badge.style.fontSize = Math.max(18, Math.floor(h * 0.2)) + 'px';
   };
   new ResizeObserver(resize).observe(parent);
-  resize();
+    resize();
 
   wrapper.appendChild(badge);
   parent.appendChild(wrapper);
