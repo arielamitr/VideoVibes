@@ -334,35 +334,28 @@ let lastMode = null;
 // ---------- Observation overlay helpers ----------
 
 function getOrCreateOverlay(video) {
+    console.log('Created vid:', video); // logs the video element
+
     if (overlays.has(video)) {
         return overlays.get(video);
     }
 
-    // Force the overlay to attach to the nearest video tile container,
-    // not just any parent.
-    const parent = video.closest('.videocontainer, .large-video-container');
-
-    if (!parent) {
-        console.warn('Video has no valid container:', video);
-        return null;
-    }
-
-    const cs = getComputedStyle(parent);
-    if (cs.position === 'static') {
-        parent.style.position = 'relative';
-    }
-
-    const wrapper = document.createElement('div');
-    Object.assign(wrapper.style, {
+    // Create wrapper and overlay
+    const overlayWrapper = document.createElement('div');
+    Object.assign(overlayWrapper.style, {
         position: 'absolute',
-        inset: '0',
+        top: '0',
+        left: '0',
+        width: '100%',
+        height: '100%',
         pointerEvents: 'none'
     });
 
     const overlay = document.createElement('div');
+    overlay.className = 'brightness-overlay';
     Object.assign(overlay.style, {
         position: 'absolute',
-        top: '10px',
+        top: '10px', // default for tiles
         left: '10px',
         fontWeight: 'bold',
         color: 'red',
@@ -370,22 +363,34 @@ function getOrCreateOverlay(video) {
         pointerEvents: 'none'
     });
 
-    const resize = () => {
-        const h = parent.offsetHeight || 300;
-        overlay.style.fontSize = Math.floor(h * 0.2) + 'px';
-    };
+    // Function to resize emoji based on wrapper height
+    function resizeEmoji() {
+        const containerHeight = overlayWrapper.offsetHeight;
+        if (video.id === 'largeVideo') {
+            // make emoji a bit smaller and lower for main speaker
+            overlay.style.fontSize = `${Math.floor(containerHeight * 0.2)}px`;
+            overlay.style.top = `${Math.floor(containerHeight * 0.1)}px`; // move down
+        } else {
+            overlay.style.fontSize = `${Math.floor(containerHeight * 0.2)}px`;
+            overlay.style.top = `${Math.floor(containerHeight * 0.05)}px`; // move down
+        }
+    }
 
-    resize();
+    // Initial resize
+    resizeEmoji();
 
-    const ro = new ResizeObserver(resize);
-    ro.observe(parent);
+    // Observe changes to wrapper size
+    const resizeObserver = new ResizeObserver(resizeEmoji);
+    resizeObserver.observe(overlayWrapper);
 
-    wrapper.appendChild(overlay);
-    parent.appendChild(wrapper);
+    overlayWrapper.appendChild(overlay);
+    video.parentElement.appendChild(overlayWrapper);
 
     overlays.set(video, overlay);
+    console.log('Created overlay:', overlay); // logs the overlay div
     return overlay;
 }
+
 
 function clearObservationUI() {
     overlays.forEach((overlay, video) => {
