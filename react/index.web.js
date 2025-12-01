@@ -114,6 +114,7 @@ const videoExpressionHistory = new Map(); // video -> { history, lastAnalyzed }
 const HISTORY_DURATION_MS = 5000;
 const ANALYZE_INTERVAL_MS = 400;
 let LEARNING_REPROMPT_DELAY = 10000;
+let learningLocked = false;
 
 // === VideoVibes interval slider (bottom-right) ===
 let vvIntervalSliderRoot = null;
@@ -391,7 +392,6 @@ function getOrCreateOverlay(video) {
     return overlay;
 }
 
-
 function clearObservationUI() {
     overlays.forEach((overlay, video) => {
         const wrapper = overlay.parentElement;
@@ -436,7 +436,8 @@ const learningState = {
     options: [],
     userSelection: null,
     feedbackShown: false,
-    overlayEl: null
+    overlayEl: null,
+    participantName: null
 };
 
 let learningCooldownUntil = 0;
@@ -444,13 +445,19 @@ let learningCooldownUntil = 0;
 function clearLearningUI() {
     console.log("clearLearningUI called");
 
+    // 🔥 Re-enable tile clicking for last target video
+    if (learningState.targetVideo) {
+        const parent = learningState.targetVideo.closest('.videocontainer, .large-video-container');
+        if (parent) parent.style.pointerEvents = "auto";
+    }
+
     if (learningState.overlayEl) {
         learningState.overlayEl.remove();
     }
 
     document.querySelectorAll(".vv-learning-wrapper").forEach(el => {
         console.log("Removing learning wrapper:", el);
-        el.remove();         
+        el.remove();
     });
 
     learningState.active = false;
@@ -460,17 +467,59 @@ function clearLearningUI() {
     learningState.userSelection = null;
     learningState.feedbackShown = false;
     learningState.overlayEl = null;
+    learningState.participantName = null;
 }
 
+/**
+ * Selects a single video element to be the target for facial recognition in learning mode.
+ * Priority is: 1. Visible Large Video, 2. A random visible video tile.
+ * * @returns {HTMLVideoElement | null} The selected video element or null if none are found.
+ */
 function pickLearningTarget() {
+    // 1. Try large video first
     const large = document.querySelector('.large-video-container video');
     if (large) {
-        return large;
+        const parent = large.closest('.large-video-container');
+
+        if (parent && parent.offsetWidth > 0 && parent.offsetHeight > 0 &&
+            large.offsetWidth > 0 && large.offsetHeight > 0) {
+            return large;
+        }
     }
 
-    const vids = document.querySelectorAll('.videocontainer video, .tile-view video');
-    return vids[0] || null;
+    // 2. Get ALL potential videos (including local)
+    const allVideos = Array.from(
+        document.querySelectorAll('.videocontainer video, .tile-view video')
+    );
+
+    if (allVideos.length === 0) {
+        return null;
+    }
+
+    // 3. Filter for visible tiles only
+    const visibleTiles = allVideos.filter(v =>
+        v.offsetWidth > 0 &&
+        v.offsetHeight > 0
+    );
+
+    if (visibleTiles.length === 0) {
+        return null;
+    }
+
+    // 4. Prefer NON-local videos
+    const nonLocal = visibleTiles.filter(v =>
+        v.id !== 'localVideo' && v.id !== 'localVideo_container'
+    );
+
+    // CASE A: Others exist → pick one of them
+    if (nonLocal.length > 0) {
+        return nonLocal[Math.floor(Math.random() * nonLocal.length)];
+    }
+
+    // CASE B: Only your own tile exists → allow it
+    return visibleTiles[0];
 }
+
 
 function generateTwoOptions(correct) {
     const all = Object.keys(EMOJI_MAP);
@@ -481,12 +530,21 @@ function generateTwoOptions(correct) {
     return [correct, wrong].sort(() => Math.random() - 0.5);
 }
 
-function showLearningChoiceUI(targetVideo, options) {
+function showLearningChoiceUI(targetVideo, options, name) {
     const parent = targetVideo.closest('.videocontainer, .large-video-container');
     if (!parent) return;
 
+    // 🔥 Disable click on tile so clicking emojis doesn't promote the tile
+    parent.style.pointerEvents = "none";
+
     const wrapper = document.createElement("div");
     wrapper.classList.add("vv-learning-wrapper");
+
+    // 🔥 Block propagation so clicks don’t reach the tile behind it
+    wrapper.addEventListener("click", e => {
+        e.stopPropagation();
+        e.preventDefault();
+    });
 
     Object.assign(wrapper.style, {
         all: 'unset',
@@ -505,8 +563,11 @@ function showLearningChoiceUI(targetVideo, options) {
     });
 
     // --- Instruction prompt ---
+    const displayName = name || "this person"; 
+
     const prompt = document.createElement("div");
-    prompt.innerText = "Which emoji best describes this person's emotion over the last 5 seconds?";
+    // UPDATED: Use the display name in the prompt
+    prompt.innerText = `Which emoji best describes ${displayName}'s emotion over the last 5 seconds?`; 
     Object.assign(prompt.style, {
         color: "white",
         fontSize: "18px",
@@ -545,10 +606,12 @@ function showLearningChoiceUI(targetVideo, options) {
         btn.onmouseenter = () => (btn.style.transform = "scale(1.2)");
         btn.onmouseleave = () => (btn.style.transform = "scale(1.0)");
 
-        btn.onclick = () => {
-            console.log("LearningMode: user clicked", opt);
+        // 🔥 Prevent tile click
+        btn.addEventListener("click", e => {
+            e.stopPropagation();
+            e.preventDefault();
             learningState.userSelection = opt;
-        };
+        });
 
         row.appendChild(btn);
     });
@@ -611,36 +674,88 @@ async function updateLearningMode() {
         return;
     }
 
+    console.log(
+    "%c[VV] LOOP",
+    "color: yellow",
+    "active=", learningState.active,
+    "cooldown=", learningCooldownUntil - Date.now()
+    );
+
+
     // Start a round
     if (!learningState.active) {
-        // If we're in cooldown, don't start a new round yet
+
+        // 🚫 If an async round is already in progress → do nothing
+        if (learningLocked) {
+            return;
+        }
+
+        // Respect cooldown
         if (learningCooldownUntil && Date.now() < learningCooldownUntil) {
             return;
         }
 
-        clearLearningUI();
+        // Lock IMMEDIATELY so no other frames start a new round
+        learningLocked = true;
+        console.log("%c[VV] LOCK SET → preventing new rounds", "color: cyan");
 
         const video = pickLearningTarget();
         if (!video) {
+            learningLocked = false;
             return;
         }
 
-        const expr = await analyzeVideoFrame(video);
+        const targetContainer = video.closest('.videocontainer, .large-video-container');
+        let participantName = 'this person';
+        
+        if (targetContainer) {
+            // Jitsi uses the class 'displayname' for the participant name label
+            const nameEl = targetContainer.querySelector('.displayname');
+            if (nameEl && nameEl.textContent) {
+                // Remove the local user's "(me)" tag and trim any whitespace
+                const rawName = nameEl.textContent.replace(/\(me\)/gi, '').trim();
+                if (rawName.length > 0) {
+                    participantName = rawName;
+                }
+            }
+        }
+
+        // ------ 🔥 Async facial analysis (single-flight guarded) ------
+        let expr;
+        try {
+            expr = await analyzeVideoFrame(video);
+        } catch (err) {
+            console.error("Face analysis failed:", err);
+            learningLocked = false;
+            return;
+        }
 
         console.log("LearningMode: analyzed expression =", expr);
-        
+
+        // Unlock BEFORE deciding whether to activate
+        learningLocked = false;
+
+        // If invalid face → skip this frame but do NOT start a new round immediately
         if (!expr || !EMOJI_MAP[expr]) {
+            console.warn("[VV] Invalid expression →", expr);
+            learningLocked = false; // ❗ IMPORTANT FIX
+            learningCooldownUntil = Date.now() + 1000; // small retry delay
             return;
         }
 
+
+        // ------ 🎉 Ready to activate ------
+        learningState.active = true;
         learningState.targetVideo = video;
         learningState.correctExpression = expr;
         learningState.options = generateTwoOptions(expr);
-        learningState.overlayEl = showLearningChoiceUI(video, learningState.options);
-        learningState.active = true;
+        learningState.participantName = participantName;
+        learningState.overlayEl = showLearningChoiceUI(video, learningState.options, participantName);
 
+        console.log("%c[VV] QUIZ ACTIVATED", "color: magenta; font-weight: bold;");
         return;
     }
+
 
     // Wait for user to click
     if (learningState.userSelection && !learningState.feedbackShown) {
